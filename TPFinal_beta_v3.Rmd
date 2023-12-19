@@ -1,0 +1,275 @@
+---
+title: "Análise de Abandono de Estudantes"
+author: '', date: "`r Sys.Date()`"
+lang: es
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(message = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+```
+
+```{r Librerias, options}
+# Carga de bibliotecas
+library(e1071)
+library(caret)
+library(dplyr)
+library(vioplot)
+library(ggplot2)
+library(ROCR)
+library(ggplot2)
+library(caret)
+library(profvis)
+library(broom)
+library(stargazer)
+library(parallel)
+library(randomForest)
+library(caret)
+library(gplots)
+library(car)
+library(glmnet)
+library(dplyr)
+library(ROSE)
+library(pROC)
+library(MASS)
+library(betareg)
+library(smotefamily)
+library(fitdistrplus)
+library(gamlss)
+library(gamlss.util)
+library(viridis)
+
+# Configuraciones globales
+options(scipen = 999)
+```
+
+```{r}
+# Configuración del directorio de trabajo
+if (Sys.info()[1] == "Windows") {
+    setwd("C:/Users/maico/Documents/Mestrado/EEA/TPFinal/")
+} else {
+    setwd("~/Documents/Mestrado/2023-2/EEA/TPFinal/")
+}
+
+# Carga de datos
+df_estudiantes <- read.csv("./datos/dados_beta_v2.csv", sep = ",")
+
+df_estudiantes <- subset(df_estudiantes, select = -c(AnoAdmissao, SemAdmissao, AnoNota, 
+                                                   SemestreNota, ExameSuficiencia, ExameComplementar, ParticipouEvento))
+
+```
+
+
+```{r}
+df_estudiantes <- df_estudiantes[!(df_estudiantes$TipoDisciplina %in% c("Outro", "Reconhecimento de Optativa", "Facultativa")), ]
+df_estudiantes <- df_estudiantes[df_estudiantes$GrupoCotaConvocado  != "Não informado ou não se aplica", ]
+df_estudiantes$GrupoCotaConvocado[df_estudiantes$GrupoCotaConvocado != "Ampla concorrência"] <- "Cotas"
+df_estudiantes$Faltas <- df_estudiantes$FaltasPratica + df_estudiantes$FaltasTeorica
+df_estudiantes <- subset(df_estudiantes, select = -c(FaltasPratica, FaltasTeorica))
+df_estudiantes$Faltas <- ifelse(df_estudiantes$Faltas > 20,
+                                      mean(df_estudiantes$Faltas, na.rm = TRUE),
+                                      df_estudiantes$Faltas)
+
+```
+
+
+```{r}
+columns_to_factor <- sapply(df_estudiantes, function(x) !is.numeric(x))
+df_estudiantes[, columns_to_factor] <- lapply(df_estudiantes[, columns_to_factor], as.factor)
+```
+
+```{r}
+df_estudiantes <- df_estudiantes %>% distinct()
+```
+
+
+```{r}
+fit_gamlss_CRA = gamlss(prob_abandonar ~ CRA,
+                    data = df_estudiantes,
+                    family = BE(mu.link = "logit", sigma.link = "logit"))
+```
+
+```{r}
+fit_beta_CRA = betareg(prob_abandonar ~ CRA, df_estudiantes)
+```
+
+```{r}
+summary(fit_gamlss_CRA)
+```
+
+```{r}
+fit_beta_CRA
+```
+
+```{r}
+secu<-seq(30 ,100, 10)
+
+plotSimpleGamlss(prob_abandonar, CRA, model=fit_gamlss_CRA,
+                 data=df_estudiantes,
+                 x.val =secu,ylim=c(0,1),xlim=c(0, 100))
+```
+```{r}
+new_data_cra <- data.frame(CRA = df_estudiantes$CRA)
+
+prediccion_gamlss_cra <- predictAll(object  = fit_gamlss_CRA,
+  type    = "response",
+  newdata = new_data_cra)
+```
+
+```{r}
+new_data_cra$mu <- prediccion_gamlss_cra$mu  
+new_data_cra$sigma <- prediccion_gamlss_cra$sigma
+```
+
+```{r}
+scattersmooth(data = new_data_cra, CRA, mu, ylim=c(0,1), xlim=c(0,100)) 
+```
+
+```{r}
+fit_gamlss_tempo_Curso = gamlss(prob_abandonar ~ TempoCurso,
+                    data = df_estudiantes,
+                    #sigma.formula = ~ TempoCurso,
+                    family = BE(mu.link = "logit", sigma.link = "logit"))
+```
+
+```{r}
+summary(fit_gamlss_tempo_Curso)
+```
+
+```{r}
+secu<-seq(0 ,10, 2)
+
+plotSimpleGamlss(prob_abandonar, TempoCurso, model=fit_gamlss_tempo_Curso,
+                 data=df_estudiantes,
+                 x.val =secu, y.val = (seq(0, 1, 0.01)),xlim=c(0, 10))
+```
+
+```{r}
+new_data_TempoCurso <- data.frame(TempoCurso = df_estudiantes$TempoCurso)
+
+predicion_gamlss_TempoCurso <- predictAll(object  = fit_gamlss_tempo_Curso,
+  type    = "response",
+  newdata = new_data_TempoCurso)
+```
+
+```{r}
+new_data_TempoCurso$mu <- predicion_gamlss_TempoCurso$mu  
+new_data_TempoCurso$sigma <- predicion_gamlss_TempoCurso$sigma
+```
+
+```{r}
+scattersmooth(data = new_data_TempoCurso, TempoCurso, mu, ylim=c(0,1), xlim=c(0,10)) 
+```
+
+```{r}
+cursos <- c('Engenharia Química', 'Engenharia Elétrica', 'Educação Infantil', 'Ciências Sociais', 
+            'Física', 'Licenciatura em Matemática', 'Ciência e Tecnologia de Laticínios', 'História',
+            'Ciência da Computação')
+
+df_seleccionado <- df_estudiantes[df_estudiantes$Curso %in% cursos, ]
+```
+
+```{r}
+fit_gamlss_Interaccion <- gamlss(prob_abandonar ~ CRA*Curso, family = BE(mu.link = "logit", sigma.link = "logit"), data = df_seleccionado)
+```
+
+```{r}
+summary(fit_gamlss_Interaccion)
+```
+
+```{r}
+new_data_Interaccion <- data.frame(CRA = df_seleccionado$CRA, Curso = df_seleccionado$Curso)
+prediccion_Interaccion <- predictAll(object = fit_gamlss_Interaccion, type = "response", newdata = new_data_Interaccion)
+
+new_data_Interaccion$mu <- prediccion_Interaccion$mu  
+new_data_Interaccion$sigma <- prediccion_Interaccion$sigma
+```
+
+
+```{r}
+ggplot(new_data_Interaccion, aes(x = CRA, y = mu, color = as.factor(Curso))) +
+  #geom_point() +
+  geom_line(aes(group = Curso)) +
+  ggtitle("Interacción CRA y Curso") +
+  theme_minimal()  +
+  ylim(0, 1)
+```
+
+
+```{r}
+fit_gamlss_CRA_Faltas = gamlss(prob_abandonar ~ CRA*Faltas,
+                    data = df_estudiantes,
+                    family = BE(mu.link = "logit", sigma.link = "logit"))
+```
+
+```{r}
+summary(fit_gamlss_CRA_Faltas)
+```
+
+```{r}
+new_data_CRA_Faltas <- data.frame(CRA = df_estudiantes$CRA, Faltas = df_estudiantes$Faltas)
+prediccion_CRA_Faltas <- predictAll(object = fit_gamlss_CRA_Faltas, type = "response", newdata = new_data_CRA_Faltas)
+
+new_data_CRA_Faltas$mu <- prediccion_CRA_Faltas$mu  
+new_data_CRA_Faltas$sigma <- prediccion_CRA_Faltas$sigma
+```
+
+```{r}
+ggplot(new_data_CRA_Faltas, aes(x = CRA, y = mu, color = Faltas)) +
+  geom_point(size = 3, alpha = 0.7) +
+  labs(title = "Relación entre CRA, Faltas y mu",
+       x = "CRA",
+       y = "mu",
+       color = "Faltas") +
+  scale_color_viridis_c() + 
+  theme_minimal()
+```
+
+```{r}
+fit_gamlss_CRA_EnsSup = gamlss(prob_abandonar ~ CRA*IngressouEnsinoSuperior,
+                    data = df_estudiantes,
+                    family = BE(mu.link = "logit", sigma.link = "logit"))
+```
+
+```{r}
+summary(fit_gamlss_CRA_EnsSup)
+```
+
+```{r}
+new_data_CRA_EnsSup <- data.frame(CRA = df_estudiantes$CRA, IngressouEnsinoSuperior = df_estudiantes$IngressouEnsinoSuperior)
+prediccion_CRA_Cotas <- predictAll(object = fit_gamlss_CRA_EnsSup, type = "response", newdata = new_data_CRA_EnsSup)
+
+new_data_CRA_EnsSup$mu <- prediccion_CRA_Cotas$mu  
+new_data_CRA_EnsSup$sigma <- prediccion_CRA_Cotas$sigma
+```
+
+
+```{r}
+ggplot(new_data_CRA_EnsSup, aes(x = CRA, y = mu, color = as.factor(IngressouEnsinoSuperior))) +
+  #geom_point() +
+  geom_line(aes(group = IngressouEnsinoSuperior)) +
+  ggtitle("Interacción CRA y TipoDisciplina") +
+  theme_minimal()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
